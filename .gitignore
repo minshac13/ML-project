@@ -1,0 +1,7 @@
+
+
+.venv/
+projectve/
+__pycache__/
+*.csv
+*.ipynb_checkpoints/
