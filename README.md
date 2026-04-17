@@ -1,16 +1,17 @@
-CardioCare Predictor
+# CardioCare Predictor
+
 This is a Machine Learning application built with Streamlit and Scikit-Learn to predict the risk of cardiovascular disease based on biometric features.
 
-Features used for prediction:
+# Features used for prediction:
+
 Age, Gender, Height, and Weight
 
 Blood Pressure (Systolic & Diastolic)
 
 Cholesterol and Glucose levels
 
-Lifestyle factors (Smoking, Alcohol, Physical Activity)
+# How to Run:
 
-How to Run:
 Clone the repository.
 
 Install dependencies: pip install -r requirements.txt
