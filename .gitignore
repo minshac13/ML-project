@@ -1,7 +1,15 @@
-
-
 .venv/
 projectve/
 __pycache__/
 *.csv
 *.ipynb_checkpoints/
+
+# --- CardioCare Pipeline Additions ---
+# Hidden Environment/API Credentials
+.env
+
+# Docker log files
+*.log
+
+# Optional: Large Model files (Uncomment if you don't want to track pkl on git)
+*.pkl

@@ -1,0 +1,22 @@
+version: '3.8'
+
+services:
+  # --- 1. The FastAPI Backend Service ---
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    ports:
+      - "8000:8000"
+    volumes:
+      - .:/app # Syncs your local folder changes inside the container
+
+  # --- 2. The Streamlit Frontend Service ---
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    ports:
+      - "8501:8501"
+    depends_on:
+      - backend # Ensures the backend boots up completely before the UI starts
