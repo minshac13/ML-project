@@ -125,69 +125,96 @@ elif page == "History Dashboard":
     )
 
     st.title("📊 Patient Assessment History")
-    st.write("View and analyze historical records retrieved from MongoDB Atlas.")
-    
-    with st.spinner("Fetching historical data..."):
-        try:
-            response = requests.get(f"{BACKEND_URL}/history")
-            if response.status_code == 200:
-                result = response.json()
+st.write("View and analyze historical records retrieved from MongoDB Atlas.")
+
+with st.spinner("Fetching historical data..."):
+    try:
+        response = requests.get(f"{BACKEND_URL}/history")
+        if response.status_code == 200:
+            result = response.json()
+            
+            raw_data = []
+            # 🛡️ Structural Guard A: Check if backend returns a dict wrapper
+            if isinstance(result, dict):
+                if result.get("status") == "success" or "data" in result:
+                    raw_data = result.get("data", [])
+                else:
+                    raw_data = []
+            # 🛡️ Structural Guard B: Check if backend returns the raw list directly
+            elif isinstance(result, list):
+                raw_data = result
                 
-                if result.get("status") == "success" and result.get("data"):
-                    raw_data = result["data"]
-                    flattened_records = []
+            if raw_data:
+                flattened_records = []
+                
+                for record in raw_data:
+                    if not isinstance(record, dict):
+                        continue
+                        
+                    flat_row = {}
                     
-                    for record in raw_data:
-                        flat_row = {}
-                        
-                        # Date Cleanup
-                        date_str = record.get("Date Evaluated") or record.get("timestamp", "N/A")
-                        if "T" in date_str:
-                            date_str = date_str.split(".")[0].replace("T", " ")
-                        flat_row["Date"] = date_str
-                        
-                        # Extract inputs safely
-                        inputs = record.get("input_features", {})
-                        if isinstance(inputs, dict):
-                            flat_row["Age"] = inputs.get("age_years") or inputs.get("age") or "N/A"
-                            flat_row["Height"] = inputs.get("height") or "N/A"
-                            flat_row["Weight"] = inputs.get("weight") or "N/A"
-                            flat_row["Systolic BP"] = inputs.get("systolic_bp") or inputs.get("ap_hi") or "N/A"
-                            flat_row["Diastolic BP"] = inputs.get("diastolic_bp") or inputs.get("ap_lo") or "N/A"
-                            flat_row["Smoking Status"] = "Active Smoker" if inputs.get("is_smoker") is True else "Non-Smoker"
-                            flat_row["Activity Level"] = "Active" if inputs.get("is_active") is True else "Sedentary"
-                            
-                            # Clean up the raw numerical code for Cholesterol
-                            raw_chol = str(inputs.get("cholesterol", inputs.get("cholesterol_level", "1")))
-                            if raw_chol == "1":
-                                flat_row["Cholesterol Level"] = "Normal"
-                            elif raw_chol == "2":
-                                flat_row["Cholesterol Level"] = "Above Normal"
-                            elif raw_chol == "3":
-                                flat_row["Cholesterol Level"] = "Well Above Normal"
-                            else:
-                                flat_row["Cholesterol Level"] = "Unknown"
-                        
-                        # Extract inference results safely
-                        inference = record.get("inference_results", {})
-                        if isinstance(inference, dict):
-                            res = inference.get("risk_label") or inference.get("prediction") or "N/A"
-                            if str(res) in ["1", "High Risk"]:
-                                flat_row["Assessment"] = "High Risk"
-                            else:
-                                flat_row["Assessment"] = "Low Risk"
-                                
-                            # Include Clinical Score points in the row entries
-                            flat_row["Clinical Score"] = f"{inference.get('clinical_score', 0)} pts"
-                        
-                        flattened_records.append(flat_row)
+                    # Date Cleanup
+                    date_str = record.get("Date Evaluated") or record.get("timestamp", "N/A")
+                    if isinstance(date_str, str) and "T" in date_str:
+                        date_str = date_str.split(".")[0].replace("T", " ")
+                    flat_row["Date"] = str(date_str)
                     
+                    # Extract inputs safely (with fallback checks to root keys if needed)
+                    inputs = record.get("input_features", {})
+                    if not isinstance(inputs, dict):
+                        inputs = {}
+                        
+                    flat_row["Age"] = inputs.get("age_years") or inputs.get("age") or record.get("age") or "N/A"
+                    
+                    # 🔥 Fixed: Looks in input_features first, then falls back to root document keys where Atlas stores them!
+                    flat_row["Height"] = inputs.get("height") or record.get("height") or "N/A"
+                    flat_row["Weight"] = inputs.get("weight") or record.get("weight") or "N/A"
+                    
+                    flat_row["Systolic BP"] = inputs.get("systolic_bp") or inputs.get("ap_hi") or "N/A"
+                    flat_row["Diastolic BP"] = inputs.get("diastolic_bp") or inputs.get("ap_lo") or "N/A"
+                    
+                    # Handle boolean check variations safely
+                    is_smoker = inputs.get("is_smoker") if inputs.get("is_smoker") is not None else record.get("is_smoker")
+                    flat_row["Smoking Status"] = "Active Smoker" if is_smoker is True else "Non-Smoker"
+                    
+                    is_active = inputs.get("is_active") if inputs.get("is_active") is not None else record.get("is_active")
+                    flat_row["Activity Level"] = "Active" if is_active is True else "Sedentary"
+                    
+                    # Clean up the raw numerical code for Cholesterol
+                    raw_chol = str(inputs.get("cholesterol", inputs.get("cholesterol_level", record.get("cholesterol", "1"))))
+                    if raw_chol == "1":
+                        flat_row["Cholesterol Level"] = "Normal"
+                    elif raw_chol == "2":
+                        flat_row["Cholesterol Level"] = "Above Normal"
+                    elif raw_chol == "3":
+                        flat_row["Cholesterol Level"] = "Well Above Normal"
+                    else:
+                        flat_row["Cholesterol Level"] = "Unknown"
+                    
+                    # Extract inference results safely
+                    inference = record.get("inference_results", {})
+                    if not isinstance(inference, dict):
+                        inference = {}
+                        
+                    res = inference.get("risk_label") or inference.get("prediction") or record.get("final_assessment") or "N/A"
+                    if str(res) in ["1", "High Risk"]:
+                        flat_row["Assessment"] = "High Risk"
+                    else:
+                        flat_row["Assessment"] = "Low Risk"
+                        
+                    # Include Clinical Score points in the row entries
+                    c_score = inference.get('clinical_score') if inference.get('clinical_score') is not None else record.get('clinical_score', 0)
+                    flat_row["Clinical Score"] = f"{c_score} pts"
+                    
+                    flattened_records.append(flat_row)
+                
+                # Render the parsed matrix data structures
+                if flattened_records:
                     df = pd.DataFrame(flattened_records)
                     
-                    # Updated desired order listing to showcase the structural improvements
                     desired_order = [
                         "Date", "Age", "Height", "Weight", 
-                        "Systolic BP", "Diastolic BP", "Cholesterol Level", 
+                        "Questions", "Systolic BP", "Diastolic BP", "Cholesterol Level", 
                         "Smoking Status", "Activity Level", "Clinical Score", "Assessment"
                     ]
                     df = df[[col for col in desired_order if col in df.columns]]
@@ -220,11 +247,12 @@ elif page == "History Dashboard":
                             )
                         }
                     )
-                    
                 else:
-                    st.info("No records found in the database yet.")
-
+                    st.info("No records could be parsed from the system database history log data.")
             else:
-                st.error("Failed to connect to backend server API.")
-        except Exception as e:
-            st.error(f"Error loading dashboard: {e}")
+                st.info("No records found in the database yet.")
+        else:
+            st.error(f"Failed to connect to backend server API. Status Code: {response.status_code}")
+            
+    except Exception as e:
+        st.error(f"Error loading dashboard: {e}")
