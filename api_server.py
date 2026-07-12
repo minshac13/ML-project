@@ -134,29 +134,23 @@ def get_assessment_history():
         # Fetch records, newest first
         cursor = predictions_collection.find().sort("timestamp", -1)
         
-        formatted_records = []
+        raw_records = []
         for record in cursor:
-            # Type safety check: Ensure dealing with a dictionary document
             if not isinstance(record, dict):
                 continue
-                
-            formatted_records.append({
-                "Age": record.get("age", "N/A"),
-                "BMI": record.get("bmi", "N/A"),
-                "Blood Pressure": record.get("blood_pressure", "N/A"),
-                # Handle safe boolean conversions
-                "Smoking Status": "Active Smoker" if record.get("is_smoker") is True else "Non-Smoker",
-                "Activity Level": "Active" if record.get("is_active") is True else "Sedentary",
-                # Handle floating numbers with fallbacks
-                "ML Risk Prob": f"{record.get('ml_high_risk_prob', 0):.1%}" if isinstance(record.get('ml_high_risk_prob'), (int, float)) else "0.0%",
-                "Clinical Score": record.get("clinical_score", 0),
-                "Assessment": record.get("final_assessment", "Unknown Risk")
-            })
             
-        return formatted_records
+            # Convert MongoDB ObjectId to string so it's JSON serializable
+            record["_id"] = str(record["_id"])
+            
+            # Convert datetime timestamp to ISO string format safely
+            if isinstance(record.get("timestamp"), datetime):
+                record["timestamp"] = record["timestamp"].isoformat()
+                
+            raw_records.append(record)
+            
+        return raw_records
         
     except Exception as e:
-        # Log the internal server trace to terminal console for visibility
         print(f"DATABASE DASHBOARD ERROR: {str(e)}")
         return {"status": "error", "message": str(e)}
 
