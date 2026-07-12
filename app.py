@@ -149,20 +149,28 @@ elif page == "History Dashboard":
                             
                         flat_row = {}
                         
-                        # Date Format Cleanup
+                        # --- 1. Date / Timestamp Cleanup ---
                         date_str = record.get("timestamp") or record.get("Date Evaluated") or "N/A"
                         if isinstance(date_str, str) and "T" in date_str:
                             date_str = date_str.split(".")[0].replace("T", " ")
                         flat_row["Date"] = str(date_str)
                         
-                        # Extract core biometric parameters mapped exactly to api_server.py keys
-                        flat_row["Age"] = record.get("age") or "N/A"
-                        flat_row["Height"] = record.get("height") or "N/A"
-                        flat_row["Weight"] = record.get("weight") or "N/A"
+                        # --- 2. Input Features Dictionary Layer Safety Check ---
+                        inputs = record.get("input_features", {})
+                        if not isinstance(inputs, dict):
+                            inputs = {}
+                            
+                        # --- 3. Core Demographics & Biometrics (With Fallbacks) ---
+                        flat_row["Age"] = record.get("age") or inputs.get("age") or inputs.get("age_years") or record.get("Age") or "N/A"
+                        flat_row["Height"] = record.get("height") or inputs.get("height") or "N/A"
+                        flat_row["Weight"] = record.get("weight") or inputs.get("weight") or "N/A"
                         
-                        # Parse out systolic and diastolic elements from the combined string ("120/80")
-                        bp_str = record.get("blood_pressure", "N/A")
-                        if "/" in str(bp_str):
+                        # --- 4. Blood Pressure Parser ---
+                        # Checks lowercase root, uppercase root, and nested layouts
+                        bp_str = record.get("blood_pressure") or record.get("Blood Pressure") or inputs.get("blood_pressure") or "N/A"
+                        
+                        # If a single combined string like "120/80" is found, split it safely
+                        if "/" in str(bp_str) and bp_str != "N/A":
                             try:
                                 flat_row["Systolic BP"] = bp_str.split("/")[0]
                                 flat_row["Diastolic BP"] = bp_str.split("/")[1]
@@ -170,20 +178,40 @@ elif page == "History Dashboard":
                                 flat_row["Systolic BP"] = "N/A"
                                 flat_row["Diastolic BP"] = "N/A"
                         else:
-                            flat_row["Systolic BP"] = "N/A"
-                            flat_row["Diastolic BP"] = "N/A"
+                            # Fallback if separate integer keys are present instead
+                            flat_row["Systolic BP"] = record.get("systolic_bp") or inputs.get("systolic_bp") or inputs.get("ap_hi") or "N/A"
+                            flat_row["Diastolic BP"] = record.get("diastolic_bp") or inputs.get("diastolic_bp") or inputs.get("ap_lo") or "N/A"
                         
-                        # Handle behavioral configurations safely
-                        is_smoker = record.get("is_smoker")
+                        # --- 5. Lifestyle / Behavioral Status Fields ---
+                        is_smoker = record.get("is_smoker") if record.get("is_smoker") is not None else inputs.get("is_smoker")
+                        if is_smoker is None and "Smoking Status" in record:
+                            is_smoker = "Active" in str(record.get("Smoking Status"))
                         flat_row["Smoking Status"] = "Active Smoker" if is_smoker is True else "Non-Smoker"
                         
-                        is_active = record.get("is_active")
+                        is_active = record.get("is_active") if record.get("is_active") is not None else inputs.get("is_active")
+                        if is_active is None and "Activity Level" in record:
+                            is_active = "Active" in str(record.get("Activity Level"))
                         flat_row["Activity Level"] = "Active" if is_active is True else "Sedentary"
                         
-                        # Handle assessment results and clinical points
-                        res = record.get("final_assessment") or "N/A"
+                        # --- 6. Cholesterol Level Mapping ---
+                        raw_chol = str(record.get("cholesterol", inputs.get("cholesterol", inputs.get("cholesterol_level", "1"))))
+                        if raw_chol == "1":
+                            flat_row["Cholesterol Level"] = "Normal"
+                        elif raw_chol == "2":
+                            flat_row["Cholesterol Level"] = "Above Normal"
+                        elif raw_chol == "3":
+                            flat_row["Cholesterol Level"] = "Well Above Normal"
+                        else:
+                            flat_row["Cholesterol Level"] = "Normal"  # Default fallback
+                        
+                        # --- 7. Output Metrics & Scores ---
+                        res = record.get("final_assessment") or record.get("Assessment") or "N/A"
                         flat_row["Assessment"] = "High Risk" if "High" in str(res) else "Low Risk"
-                        flat_row["Clinical Score"] = f"{record.get('clinical_score', 0)} pts"
+                        
+                        score = record.get("clinical_score") or record.get("Clinical Score") or 0
+                        # Strip non-numeric text out if points were hardcoded as a string
+                        score_clean = str(score).replace(" pts", "")
+                        flat_row["Clinical Score"] = f"{score_clean} pts"
                         
                         flattened_records.append(flat_row)
                     
@@ -192,7 +220,7 @@ elif page == "History Dashboard":
                         
                         desired_order = [
                             "Date", "Age", "Height", "Weight", 
-                            "Systolic BP", "Diastolic BP", 
+                            "Systolic BP", "Diastolic BP", "Cholesterol Level",
                             "Smoking Status", "Activity Level", "Clinical Score", "Assessment"
                         ]
                         df = df[[col for col in desired_order if col in df.columns]]
@@ -208,7 +236,7 @@ elif page == "History Dashboard":
                         
                         st.markdown("---")
                         
-                        # --- BEAUTIFIED DATA TABLE ---
+                        # --- DATA TABLE ---
                         st.subheader("📋 Interactive Patient Log")
                         st.write("Use the headers to sort or filter specific case entries.")
                         
