@@ -153,34 +153,49 @@ with st.spinner("Fetching historical data..."):
                         
                     flat_row = {}
                     
-                    # Date Cleanup
+                    # 1. Date Cleanup
                     date_str = record.get("Date Evaluated") or record.get("timestamp", "N/A")
                     if isinstance(date_str, str) and "T" in date_str:
                         date_str = date_str.split(".")[0].replace("T", " ")
                     flat_row["Date"] = str(date_str)
                     
-                    # Extract inputs safely (with fallback checks to root keys if needed)
+                    # 2. Extract inputs safely (Checking nested dictionary first, then flat root keys)
                     inputs = record.get("input_features", {})
                     if not isinstance(inputs, dict):
                         inputs = {}
                         
+                    # Age Fallback
                     flat_row["Age"] = inputs.get("age_years") or inputs.get("age") or record.get("age") or "N/A"
                     
-                    # 🔥 Fixed: Looks in input_features first, then falls back to root document keys where Atlas stores them!
+                    # Height & Weight Fallbacks
                     flat_row["Height"] = inputs.get("height") or record.get("height") or "N/A"
                     flat_row["Weight"] = inputs.get("weight") or record.get("weight") or "N/A"
                     
-                    flat_row["Systolic BP"] = inputs.get("systolic_bp") or inputs.get("ap_hi") or "N/A"
-                    flat_row["Diastolic BP"] = inputs.get("diastolic_bp") or inputs.get("ap_lo") or "N/A"
+                    # 3. Dynamic Blood Pressure Parser (Handles separate ints OR combined "120/80" strings)
+                    sys_bp = inputs.get("systolic_bp") or inputs.get("ap_hi") or record.get("systolic_bp")
+                    dia_bp = inputs.get("diastolic_bp") or inputs.get("ap_lo") or record.get("diastolic_bp")
                     
-                    # Handle boolean check variations safely
+                    # If separate keys aren't found, try parsing the combined "blood_pressure" string from Atlas
+                    if (sys_bp is None or sys_bp == "N/A") and "blood_pressure" in record:
+                        bp_str = str(record.get("blood_pressure", ""))
+                        if "/" in bp_str:
+                            try:
+                                sys_bp = bp_str.split("/")[0]
+                                dia_bp = bp_str.split("/")[1]
+                            except Exception:
+                                pass
+                                
+                    flat_row["Systolic BP"] = sys_bp or "N/A"
+                    flat_row["Diastolic BP"] = dia_bp or "N/A"
+                    
+                    # 4. Lifestyle Behavior Fallbacks
                     is_smoker = inputs.get("is_smoker") if inputs.get("is_smoker") is not None else record.get("is_smoker")
                     flat_row["Smoking Status"] = "Active Smoker" if is_smoker is True else "Non-Smoker"
                     
                     is_active = inputs.get("is_active") if inputs.get("is_active") is not None else record.get("is_active")
                     flat_row["Activity Level"] = "Active" if is_active is True else "Sedentary"
                     
-                    # Clean up the raw numerical code for Cholesterol
+                    # 5. Cholesterol Conversion
                     raw_chol = str(inputs.get("cholesterol", inputs.get("cholesterol_level", record.get("cholesterol", "1"))))
                     if raw_chol == "1":
                         flat_row["Cholesterol Level"] = "Normal"
@@ -191,7 +206,7 @@ with st.spinner("Fetching historical data..."):
                     else:
                         flat_row["Cholesterol Level"] = "Unknown"
                     
-                    # Extract inference results safely
+                    # 6. Assessment Result Fallbacks
                     inference = record.get("inference_results", {})
                     if not isinstance(inference, dict):
                         inference = {}
@@ -202,7 +217,6 @@ with st.spinner("Fetching historical data..."):
                     else:
                         flat_row["Assessment"] = "Low Risk"
                         
-                    # Include Clinical Score points in the row entries
                     c_score = inference.get('clinical_score') if inference.get('clinical_score') is not None else record.get('clinical_score', 0)
                     flat_row["Clinical Score"] = f"{c_score} pts"
                     
