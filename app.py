@@ -1,10 +1,17 @@
 import streamlit as st
 import requests
 import pandas as pd
+import os
 
 # Define backend base URL (using container service name or localhost based on your network)
-BACKEND_URL = "http://backend:8000" # Use "http://localhost:8000" if running outside Docker
-API_URL = "http://backend:8000/predict"
+if "BACKEND_URL" in st.secrets:
+    BACKEND_URL = st.secrets["BACKEND_URL"]
+else:
+    BACKEND_URL = os.getenv("BACKEND_URL", "http://backend:8000")
+
+BACKEND_URL = BACKEND_URL.rstrip("/")
+API_URL = f"{BACKEND_URL}/predict"
+HISTORY_URL = f"{BACKEND_URL}/history"
 
 st.set_page_config(page_title="CardioCare Predictor", layout="wide")
 
