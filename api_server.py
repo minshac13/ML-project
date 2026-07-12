@@ -131,7 +131,7 @@ def predict_cardio_risk(patient: PatientData):
 @app.get("/history")
 def get_assessment_history():
     try:
-        # Fetch records, newest first
+        # Fetch all records from the collection, newest first
         cursor = predictions_collection.find().sort("timestamp", -1)
         
         raw_records = []
@@ -139,10 +139,10 @@ def get_assessment_history():
             if not isinstance(record, dict):
                 continue
             
-            # Convert MongoDB ObjectId to string so it's JSON serializable
+            # Convert MongoDB ObjectId to standard string so JSON can send it
             record["_id"] = str(record["_id"])
             
-            # Convert datetime timestamp to ISO string format safely
+            # Convert datetime objects to string ISO format safely
             if isinstance(record.get("timestamp"), datetime):
                 record["timestamp"] = record["timestamp"].isoformat()
                 
