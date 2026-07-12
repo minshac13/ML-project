@@ -107,7 +107,7 @@ if page == "New Assessment":
             st.error(f"Connection Error: {e}")
 
 elif page == "History Dashboard":
-    # 1. Global Font Styling via CSS (for headers, metrics, and text)
+    # 1. Global Font Styling via CSS
     st.markdown(
         """
         <style>
@@ -125,148 +125,112 @@ elif page == "History Dashboard":
     )
 
     st.title("📊 Patient Assessment History")
-st.write("View and analyze historical records retrieved from MongoDB Atlas.")
+    st.write("View and analyze historical records retrieved from MongoDB Atlas.")
 
-with st.spinner("Fetching historical data..."):
-    try:
-        response = requests.get(f"{BACKEND_URL}/history")
-        if response.status_code == 200:
-            result = response.json()
-            
-            raw_data = []
-            # 🛡️ Structural Guard A: Check if backend returns a dict wrapper
-            if isinstance(result, dict):
-                if result.get("status") == "success" or "data" in result:
-                    raw_data = result.get("data", [])
-                else:
-                    raw_data = []
-            # 🛡️ Structural Guard B: Check if backend returns the raw list directly
-            elif isinstance(result, list):
-                raw_data = result
+    with st.spinner("Fetching historical data..."):
+        try:
+            response = requests.get(f"{BACKEND_URL}/history")
+            if response.status_code == 200:
+                result = response.json()
                 
-            if raw_data:
-                flattened_records = []
-                
-                for record in raw_data:
-                    if not isinstance(record, dict):
-                        continue
+                raw_data = []
+                if isinstance(result, dict):
+                    if result.get("status") == "success" or "data" in result:
+                        raw_data = result.get("data", [])
+                elif isinstance(result, list):
+                    raw_data = result
+                    
+                if raw_data:
+                    flattened_records = []
+                    
+                    for record in raw_data:
+                        if not isinstance(record, dict):
+                            continue
+                            
+                        flat_row = {}
                         
-                    flat_row = {}
-                    
-                    # 1. Date Cleanup
-                    date_str = record.get("Date Evaluated") or record.get("timestamp", "N/A")
-                    if isinstance(date_str, str) and "T" in date_str:
-                        date_str = date_str.split(".")[0].replace("T", " ")
-                    flat_row["Date"] = str(date_str)
-                    
-                    # 2. Extract inputs safely (Checking nested dictionary first, then flat root keys)
-                    inputs = record.get("input_features", {})
-                    if not isinstance(inputs, dict):
-                        inputs = {}
+                        # Date Format Cleanup
+                        date_str = record.get("timestamp") or record.get("Date Evaluated") or "N/A"
+                        if isinstance(date_str, str) and "T" in date_str:
+                            date_str = date_str.split(".")[0].replace("T", " ")
+                        flat_row["Date"] = str(date_str)
                         
-                    # Age Fallback
-                    flat_row["Age"] = inputs.get("age_years") or inputs.get("age") or record.get("age") or "N/A"
-                    
-                    # Height & Weight Fallbacks
-                    flat_row["Height"] = inputs.get("height") or record.get("height") or "N/A"
-                    flat_row["Weight"] = inputs.get("weight") or record.get("weight") or "N/A"
-                    
-                    # 3. Dynamic Blood Pressure Parser (Handles separate ints OR combined "120/80" strings)
-                    sys_bp = inputs.get("systolic_bp") or inputs.get("ap_hi") or record.get("systolic_bp")
-                    dia_bp = inputs.get("diastolic_bp") or inputs.get("ap_lo") or record.get("diastolic_bp")
-                    
-                    # If separate keys aren't found, try parsing the combined "blood_pressure" string from Atlas
-                    if (sys_bp is None or sys_bp == "N/A") and "blood_pressure" in record:
-                        bp_str = str(record.get("blood_pressure", ""))
-                        if "/" in bp_str:
+                        # Extract core biometric parameters mapped exactly to api_server.py keys
+                        flat_row["Age"] = record.get("age") or "N/A"
+                        flat_row["Height"] = record.get("height") or "N/A"
+                        flat_row["Weight"] = record.get("weight") or "N/A"
+                        
+                        # Parse out systolic and diastolic elements from the combined string ("120/80")
+                        bp_str = record.get("blood_pressure", "N/A")
+                        if "/" in str(bp_str):
                             try:
-                                sys_bp = bp_str.split("/")[0]
-                                dia_bp = bp_str.split("/")[1]
+                                flat_row["Systolic BP"] = bp_str.split("/")[0]
+                                flat_row["Diastolic BP"] = bp_str.split("/")[1]
                             except Exception:
-                                pass
-                                
-                    flat_row["Systolic BP"] = sys_bp or "N/A"
-                    flat_row["Diastolic BP"] = dia_bp or "N/A"
-                    
-                    # 4. Lifestyle Behavior Fallbacks
-                    is_smoker = inputs.get("is_smoker") if inputs.get("is_smoker") is not None else record.get("is_smoker")
-                    flat_row["Smoking Status"] = "Active Smoker" if is_smoker is True else "Non-Smoker"
-                    
-                    is_active = inputs.get("is_active") if inputs.get("is_active") is not None else record.get("is_active")
-                    flat_row["Activity Level"] = "Active" if is_active is True else "Sedentary"
-                    
-                    # 5. Cholesterol Conversion
-                    raw_chol = str(inputs.get("cholesterol", inputs.get("cholesterol_level", record.get("cholesterol", "1"))))
-                    if raw_chol == "1":
-                        flat_row["Cholesterol Level"] = "Normal"
-                    elif raw_chol == "2":
-                        flat_row["Cholesterol Level"] = "Above Normal"
-                    elif raw_chol == "3":
-                        flat_row["Cholesterol Level"] = "Well Above Normal"
-                    else:
-                        flat_row["Cholesterol Level"] = "Unknown"
-                    
-                    # 6. Assessment Result Fallbacks
-                    inference = record.get("inference_results", {})
-                    if not isinstance(inference, dict):
-                        inference = {}
+                                flat_row["Systolic BP"] = "N/A"
+                                flat_row["Diastolic BP"] = "N/A"
+                        else:
+                            flat_row["Systolic BP"] = "N/A"
+                            flat_row["Diastolic BP"] = "N/A"
                         
-                    res = inference.get("risk_label") or inference.get("prediction") or record.get("final_assessment") or "N/A"
-                    if str(res) in ["1", "High Risk"]:
-                        flat_row["Assessment"] = "High Risk"
-                    else:
-                        flat_row["Assessment"] = "Low Risk"
+                        # Handle behavioral configurations safely
+                        is_smoker = record.get("is_smoker")
+                        flat_row["Smoking Status"] = "Active Smoker" if is_smoker is True else "Non-Smoker"
                         
-                    c_score = inference.get('clinical_score') if inference.get('clinical_score') is not None else record.get('clinical_score', 0)
-                    flat_row["Clinical Score"] = f"{c_score} pts"
+                        is_active = record.get("is_active")
+                        flat_row["Activity Level"] = "Active" if is_active is True else "Sedentary"
+                        
+                        # Handle assessment results and clinical points
+                        res = record.get("final_assessment") or "N/A"
+                        flat_row["Assessment"] = "High Risk" if "High" in str(res) else "Low Risk"
+                        flat_row["Clinical Score"] = f"{record.get('clinical_score', 0)} pts"
+                        
+                        flattened_records.append(flat_row)
                     
-                    flattened_records.append(flat_row)
-                
-                # Render the parsed matrix data structures
-                if flattened_records:
-                    df = pd.DataFrame(flattened_records)
-                    
-                    desired_order = [
-                        "Date", "Age", "Height", "Weight", 
-                        "Questions", "Systolic BP", "Diastolic BP", "Cholesterol Level", 
-                        "Smoking Status", "Activity Level", "Clinical Score", "Assessment"
-                    ]
-                    df = df[[col for col in desired_order if col in df.columns]]
-                    
-                    # --- METRICS SECTION ---
-                    st.subheader("💡 Quick Analytics")
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        st.metric("Total Assessments Run", len(df))
-                    with col2:
-                        high_risk_count = df["Assessment"].str.contains("High", na=False).sum()
-                        st.metric("High Risk Cases Detected", high_risk_count)
-                    
-                    st.markdown("---")
-                    
-                    # --- BEAUTIFIED DATA TABLE ---
-                    st.subheader("📋 Interactive Patient Log")
-                    st.write("Use the headers to sort or filter specific case entries.")
-                    
-                    st.dataframe(
-                        df,
-                        use_container_width=True,
-                        hide_index=True,
-                        column_config={
-                            "Assessment": st.column_config.SelectboxColumn(
-                                "Assessment",
-                                width="medium",
-                                required=True,
-                                options=["High Risk", "Low Risk"],
-                            )
-                        }
-                    )
+                    if flattened_records:
+                        df = pd.DataFrame(flattened_records)
+                        
+                        desired_order = [
+                            "Date", "Age", "Height", "Weight", 
+                            "Systolic BP", "Diastolic BP", 
+                            "Smoking Status", "Activity Level", "Clinical Score", "Assessment"
+                        ]
+                        df = df[[col for col in desired_order if col in df.columns]]
+                        
+                        # --- METRICS SECTION ---
+                        st.subheader("💡 Quick Analytics")
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            st.metric("Total Assessments Run", len(df))
+                        with col2:
+                            high_risk_count = df["Assessment"].str.contains("High", na=False).sum()
+                            st.metric("High Risk Cases Detected", high_risk_count)
+                        
+                        st.markdown("---")
+                        
+                        # --- BEAUTIFIED DATA TABLE ---
+                        st.subheader("📋 Interactive Patient Log")
+                        st.write("Use the headers to sort or filter specific case entries.")
+                        
+                        st.dataframe(
+                            df,
+                            use_container_width=True,
+                            hide_index=True,
+                            column_config={
+                                "Assessment": st.column_config.SelectboxColumn(
+                                    "Assessment",
+                                    width="medium",
+                                    required=True,
+                                    options=["High Risk", "Low Risk"],
+                                )
+                            }
+                        )
+                    else:
+                        st.info("No records could be parsed from the system database history log data.")
                 else:
-                    st.info("No records could be parsed from the system database history log data.")
+                    st.info("No records found in the database yet.")
             else:
-                st.info("No records found in the database yet.")
-        else:
-            st.error(f"Failed to connect to backend server API. Status Code: {response.status_code}")
-            
-    except Exception as e:
-        st.error(f"Error loading dashboard: {e}")
+                st.error(f"Failed to connect to backend server API. Status Code: {response.status_code}")
+                
+        except Exception as e:
+            st.error(f"Error loading dashboard: {e}")
