@@ -1,202 +1,189 @@
-# from fastapi import FastAPI
-# from pydantic import BaseModel
-# import joblib
-# import pandas as pd
-# import numpy as np
-
-# # 1. Initialize the FastAPI app
-# app = FastAPI(title="CardioCare Predictor Engine")
-
-# # 2. Load your exact assets (Model and Imputer)
-# model = joblib.load('cardio_model.pkl')
-# imputer = joblib.load('cardio_imputer.pkl')
-
-# # 3. Define the strict Data Schema representing your 6 features
-# class PatientInput(BaseModel):
-#     age_years: float
-#     height: float
-#     weight: float
-#     systolic_bp: float
-#     diastolic_bp: float
-#     cholesterol: int  # Accepts 1, 2, or 3
-
-# # 4. Create the prediction endpoint
-# @app.post("/predict")
-# def predict_cardio_risk(patient: PatientInput):
-#     """
-#     Accepts patient features, preprocesses age to days, applies the 
-#     imputer, and runs inference using the CardioCare model.
-#     """
-#     # Preprocessing: Convert age to days just like in your training logic
-#     age_days = patient.age_years * 365.25
-    
-#     # Create the input DataFrame with your exact training column names
-#     user_data = pd.DataFrame(
-#         [[age_days, patient.height, patient.weight, patient.systolic_bp, patient.diastolic_bp, patient.cholesterol]], 
-#         columns=['age_years', 'height', 'weight', 'systolic_bp', 'diastolic_bp', 'cholesterol']
-#     )
-    
-#     # Process the data through your imputer pipeline
-#     user_data_imputed = imputer.transform(user_data)
-    
-#     # Run Inference
-#     prediction = int(model.predict(user_data_imputed)[0])
-#     probability = float(model.predict_proba(user_data_imputed)[0][1]) # Probability of High Risk
-    
-#     # Return structured JSON output back to the client
-#     return {
-#         "status": "success",
-#         "prediction": prediction,
-#         "high_risk_probability": round(probability, 4),
-#         "risk_label": "High Risk" if prediction == 1 else "Low Risk"
-#     }
-
+import os
 from fastapi import FastAPI
 from pydantic import BaseModel
 import joblib
 import pandas as pd
 import numpy as np
 from pymongo import MongoClient
-from datetime import datetime
-from bson import ObjectId # Import this to handle MongoDB IDs safely
+from datetime import datetime, timezone
+import google.generativeai as genai
 
-app = FastAPI(title="CardioCare Predictor Engine")
+# 1. Initialize Gemini with active model
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+genai.configure(api_key=GEMINI_API_KEY)
+gemini_model = genai.GenerativeModel("gemini-2.5-flash") 
 
-# --- MONGODB CONFIGURATION ---
-# Paste your actual connection string from Atlas below! 
-# Swap out <password> with your real database user password.
-MONGO_URI = "mongodb+srv://minshac13_db_user:db_123_password@cluster0.oap4ftf.mongodb.net/?appName=Cluster0"
+app = FastAPI(title="CardioCare Hybrid Predictor Engine")
 
-# Initialize the MongoClient to hold an open connection pool to the cloud
+# 2. Database connection
+MONGO_URI = os.getenv("MONGO_URI")
 client = MongoClient(MONGO_URI)
-
-# Select a database and a collection. MongoDB will automatically create these if they don't exist yet!
 db = client["cardiocare_db"]
 predictions_collection = db["patient_predictions"]
-# ------------------------------
 
+# 3. Load ML model files
 model = joblib.load('cardio_model.pkl')
-imputer = joblib.load('cardio_imputer.pkl')
 
-class PatientInput(BaseModel):
-    age_years: float
+# Updated Pydantic Model to accept smoking and activity
+class PatientData(BaseModel):
+    age_years: int
     height: float
     weight: float
-    systolic_bp: float
-    diastolic_bp: float
+    systolic_bp: int
+    diastolic_bp: int
     cholesterol: int
+    is_smoker: bool
+    is_active: bool
+
+# Deterministic Clinical Scoring Engine Function
+def calculate_clinical_risk(age: int, height: float, weight: float, sys: int, dia: int, chol: int, smoker: bool, active: bool):
+    risk_points = 0
+    
+    # Calculate BMI
+    bmi = weight / ((height / 100) ** 2)
+    
+    # Age factor
+    if age >= 60: risk_points += 4
+    elif age >= 45: risk_points += 2
+    
+    # Blood Pressure (AHA Guideline Thresholds)
+    if sys >= 140 or dia >= 90: risk_points += 3       # Stage 2 Hypertension
+    elif 130 <= sys < 140 or 80 <= dia < 90: risk_points += 1 # Stage 1 Hypertension
+    
+    # Metabolic strain (BMI)
+    if bmi >= 30: risk_points += 2                     # Obesity marker
+    
+    # Behavioral Risk factors (Direct Physiological impact)
+    if smoker: risk_points += 3                        # Arterial damage multiplier
+    if not active: risk_points += 1                    # Sedentary modifier
+    
+    # Cholesterol level points
+    if chol == 3: risk_points += 3                     # Well above normal
+    elif chol == 2: risk_points += 1                   # Above normal
+    
+    risk_label = "High Risk" if risk_points >= 6 else "Low Risk"
+    return risk_points, risk_label
 
 @app.post("/predict")
-def predict_cardio_risk(patient: PatientInput):
-    # Preprocessing
-    age_days = patient.age_years * 365.25
-    user_data = pd.DataFrame(
-        [[age_days, patient.height, patient.weight, patient.systolic_bp, patient.diastolic_bp, patient.cholesterol]], 
-        columns=['age_years', 'height', 'weight', 'systolic_bp', 'diastolic_bp', 'cholesterol']
-    )
-    
-    # Process through imputer and formatting dataframe for sklearn to clear warnings
-    user_data_imputed = imputer.transform(user_data)
-    user_data_imputed_df = pd.DataFrame(user_data_imputed, columns=user_data.columns)
-    
-    # Inference
-    prediction = int(model.predict(user_data_imputed_df)[0])
-    probability = float(model.predict_proba(user_data_imputed_df)[0][1])
-    risk_label = "High Risk" if prediction == 1 else "Low Risk"
-    
-    # --- NO_SQL DATABASE LOGGING ---
-    # We construct a clean, nested document (Python dictionary) representing the interaction
-    log_document = {
-        "timestamp": datetime.utcnow(),
-        "input_features": {
-            "age_years": patient.age_years,
+def predict_cardio_risk(patient: PatientData):
+    try:
+        # --- 1. RUN MACHINE LEARNING INFERENCE ---
+        # The ML model expects exactly the 6 columns it was trained on
+        input_data = pd.DataFrame([{
+            'age_years': patient.age_years,
+            'height': patient.height,
+            'weight': patient.weight,
+            'systolic_bp': patient.systolic_bp,
+            'diastolic_bp': patient.diastolic_bp,
+            'cholesterol': patient.cholesterol
+        }])
+        
+        ml_prediction = int(model.predict(input_data)[0])
+        ml_probability = float(model.predict_proba(input_data)[0][1])
+        
+        # --- 2. RUN CLINICAL SCORING ENGINE ---
+        clinical_score, clinical_label = calculate_clinical_risk(
+            patient.age_years, patient.height, patient.weight,
+            patient.systolic_bp, patient.diastolic_bp, patient.cholesterol,
+            patient.is_smoker, patient.is_active
+        )
+        
+        # --- 3. COMBINE INSIGHTS FOR THE PROMPT ---
+        chol_labels = {1: "Normal", 2: "Above Normal", 3: "Well Above Normal"}
+        ai_advice = generate_ai_recommendations(
+            age=patient.age_years,
+            sys=patient.systolic_bp,
+            dia=patient.diastolic_bp,
+            chol=chol_labels.get(patient.cholesterol, "Unknown"),
+            smoker=patient.is_smoker,
+            active=patient.is_active,
+            ml_status="High Risk" if ml_prediction == 1 else "Low Risk",
+            clinical_status=clinical_label
+        )
+        
+        # --- 4. PERSIST DOCUMENT TO NOSQL (MongoDB) ---
+        log_document = {
+            "timestamp": datetime.now(timezone.utc), # Avoids deprecated utcnow()
+            "age": patient.age_years,
             "height": patient.height,
             "weight": patient.weight,
-            "systolic_bp": patient.systolic_bp,
-            "diastolic_bp": patient.diastolic_bp,
-            "cholesterol": patient.cholesterol
-        },
-        "inference_results": {
-            "prediction": prediction,
-            "high_risk_probability": round(probability, 4),
-            "risk_label": risk_label
+            "bmi": round(patient.weight / ((patient.height / 100) ** 2), 2),
+            "blood_pressure": f"{patient.systolic_bp}/{patient.diastolic_bp}",
+            "is_smoker": patient.is_smoker,
+            "is_active": patient.is_active,
+            "ml_high_risk_prob": ml_probability,
+            "clinical_score": clinical_score,
+            "final_assessment": "High Risk" if (clinical_label == "High Risk" or ml_prediction == 1) else "Low Risk"
         }
-    }
-    
-    # Push the document directly to our cloud database collection
-    predictions_collection.insert_one(log_document)
-    # -------------------------------
-
-    return {
-        "status": "success",
-        "prediction": prediction,
-        "high_risk_probability": round(probability, 4),
-        "risk_label": risk_label
-    }
-
-
-# @app.get("/assessments")
-# async def get_assessments():
-#     try:
-#         # Fetch all documents from your collection, sorting by newest first
-#         cursor = predictions_collection.find().sort("_id", -1) 
+        predictions_collection.insert_one(log_document)
         
-#         assessments = []
-#         for doc in await cursor.to_list(length=100): # Adjust length limit as needed
-#             # MongoDB's default '_id' is an ObjectId, which FastAPI can't serialize to JSON.
-#             # We convert it to a string, or just remove it before sending.
-#             doc["id"] = str(doc["_id"])
-#             del doc["_id"]
-#             assessments.append(doc)
-            
-#         return {"status": "success", "data": assessments}
-#     except Exception as e:
-#         return {"status": "error", "message": str(e)}
-    
-# @app.get("/assessments")
-# async def get_assessments():
-#     try:
-#         # 1. Fetch data from collection
-#         cursor = predictions_collection.find().sort("_id", -1)
-        
-#         # 2. Extract documents into a list (Crucial if using Motor)
-#         # If your app is async, use: await cursor.to_list(length=100)
-#         # If your app is synchronous (standard pymongo), use: list(cursor)
-#         documents = await cursor.to_list(length=100) 
-        
-#         assessments = []
-#         for doc in documents:
-#             # 3. Safely convert MongoDB's ObjectId to a string
-#             doc["id"] = str(doc["_id"])
-#             del doc["_id"]
-#             assessments.append(doc)
-            
-#         print(f"Backend fetched {len(assessments)} documents.") # Debug line in your Docker logs
-#         return {"status": "success", "data": assessments}
-        
-#     except Exception as e:
-#         print(f"Database error: {str(e)}")
-#         return {"status": "error", "message": str(e)}
-    
-@app.get("/assessments")
-def get_assessments(): # 1. Removed 'async' from the function def since it's synchronous PyMongo
-    try:
-        # 2. Fetch the documents from your collection
-        cursor = predictions_collection.find().sort("_id", -1)
-        
-        # 3. Convert the cursor straight into a Python list without 'await'
-        documents = list(cursor) 
-        
-        assessments = []
-        for doc in documents:
-            # 4. Safely convert MongoDB's ObjectId to a string
-            doc["id"] = str(doc["_id"])
-            del doc["_id"]
-            assessments.append(doc)
-            
-        print(f"Backend fetched {len(assessments)} documents successfully!") 
-        return {"status": "success", "data": assessments}
+        return {
+            "ml_prediction": ml_prediction,
+            "high_risk_probability": ml_probability,
+            "clinical_risk_score": clinical_score,
+            "clinical_risk_label": clinical_label,
+            "recommendations": ai_advice
+        }
         
     except Exception as e:
-        print(f"Database error: {str(e)}")
         return {"status": "error", "message": str(e)}
+    
+@app.get("/history")
+def get_assessment_history():
+    try:
+        # Fetch records, newest first
+        cursor = predictions_collection.find().sort("timestamp", -1)
+        
+        formatted_records = []
+        for record in cursor:
+            # Type safety check: Ensure dealing with a dictionary document
+            if not isinstance(record, dict):
+                continue
+                
+            formatted_records.append({
+                "Age": record.get("age", "N/A"),
+                "BMI": record.get("bmi", "N/A"),
+                "Blood Pressure": record.get("blood_pressure", "N/A"),
+                # Handle safe boolean conversions
+                "Smoking Status": "Active Smoker" if record.get("is_smoker") is True else "Non-Smoker",
+                "Activity Level": "Active" if record.get("is_active") is True else "Sedentary",
+                # Handle floating numbers with fallbacks
+                "ML Risk Prob": f"{record.get('ml_high_risk_prob', 0):.1%}" if isinstance(record.get('ml_high_risk_prob'), (int, float)) else "0.0%",
+                "Clinical Score": record.get("clinical_score", 0),
+                "Assessment": record.get("final_assessment", "Unknown Risk")
+            })
+            
+        return formatted_records
+        
+    except Exception as e:
+        # Log the internal server trace to terminal console for visibility
+        print(f"DATABASE DASHBOARD ERROR: {str(e)}")
+        return {"status": "error", "message": str(e)}
+
+def generate_ai_recommendations(age: int, sys: int, dia: int, chol: str, smoker: bool, active: bool, ml_status: str, clinical_status: str) -> str:
+    # Build prompt that forces explicit awareness of smoking and activity context
+    prompt = f"""
+    You are an expert AI clinical assistant specializing in preventive cardiology. 
+    Analyze this patient's comprehensive profile and provide structured, actionable lifestyle recommendations.
+
+    PATIENT PROFILE:
+    - Age: {age} years
+    - Blood Pressure: {sys}/{dia} mmHg
+    - Cholesterol Status: {chol}
+    - Tobacco Use: {"Active Smoker" if smoker else "Non-Smoker"}
+    - Physical Activity: {"Regularly Active" if active else "Sedentary / Low Activity"}
+    - Machine Learning Assessment: {ml_status}
+    - Clinical Criteria Assessment: {clinical_status}
+
+    CRITICAL INSTRUCTIONS:
+    1. Identify specific risk areas based strictly on AHA guidelines. If the patient is an active smoker, prioritize explicit smoking cessation advice. If sedentary, outline custom physical guidelines.
+    2. Provide 3 highly practical, bulleted changes the patient can easily initiate (nutrition targets, safe cardio ranges, etc.).
+    3. Keep the tone professional, empathetic, and encouraging.
+    4. Provide the output in clean Markdown format with explicit bold headings.
+    5. Conclude with a clear medical disclaimer statement.
+    """
+    try:
+        response = gemini_model.generate_content(prompt)
+        return response.text
+    except Exception as e:
+        return f"Recommendations temporarily unavailable. (Error Details: {str(e)})"

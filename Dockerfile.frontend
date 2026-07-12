@@ -8,7 +8,7 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# 4. Copy your user interface code file
+# 4. Copy the user interface code file
 COPY app.py .
 
 # 5. Expose Streamlit's default web traffic port

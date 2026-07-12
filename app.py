@@ -1,77 +1,3 @@
-# import streamlit as st
-# import requests
-
-# # 1. Page Configuration
-# st.set_page_config(page_title="CardioCare Predictor", layout="centered")
-
-# # 2. Define the exact URL where your FastAPI server is listening
-# # This points to the local server we started in the previous steps
-# API_URL = "http://backend:8000/predict"
-
-# # 3. Header Section
-# st.title("❤️ Cardiovascular Risk Assessment")
-# st.write("Enter the patient details below to predict the likelihood of cardiovascular disease.")
-# st.divider()
-
-# # 4. User Input Layout
-# col1, col2 = st.columns(2)
-
-# with col1:
-#     age_years = st.number_input("Age (Years)", min_value=1, max_value=120, value=50)
-#     height = st.number_input("Height (cm)", min_value=100, max_value=250, value=165)
-#     weight = st.number_input("Weight (kg)", min_value=30, max_value=250, value=70)
-
-# with col2:
-#     systolic = st.number_input("Systolic BP (ap_hi)", min_value=80, max_value=250, value=120)
-#     diastolic = st.number_input("Diastolic BP (ap_lo)", min_value=40, max_value=150, value=80)
-#     cholesterol = st.selectbox("Cholesterol Level", options=[1, 2, 3], 
-#                                format_func=lambda x: {1: "Normal", 2: "Above Normal", 3: "Well Above Normal"}[x])
-
-# # 5. Prediction Logic via API
-# if st.button("Generate Assessment", type="primary"):
-    
-#     # Create the payload dictionary matching the exact schema FastAPI expects
-#     payload = {
-#         "age_years": float(age_years),
-#         "height": float(height),
-#         "weight": float(weight),
-#         "systolic_bp": float(systolic),
-#         "diastolic_bp": float(diastolic),
-#         "cholesterol": int(cholesterol)
-#     }
-    
-#     try:
-#         # Send an HTTP POST request containing our data to the FastAPI endpoint
-#         response = requests.post(API_URL, json=payload)
-        
-#         # Check if the API responded with success (Status Code 200)
-#         if response.status_code == 200:
-#             result = response.json()  # Parse the incoming JSON text into a Python dict
-            
-#             prediction = result["prediction"]
-#             probability = result["high_risk_probability"]
-#             risk_label = result["risk_label"]
-            
-#             st.divider()
-            
-#             # 6. Display Results from API Response
-#             if prediction == 1:
-#                 st.error(f"### Result: {risk_label} Detected")
-#                 st.write(f"The model identifies patterns consistent with cardiovascular disease (Confidence: {probability:.2%})")
-#                 st.warning("Advise: Please consult with a healthcare professional for a detailed clinical examination.")
-#             else:
-#                 st.success(f"### Result: {risk_label} Detected")
-#                 st.write(f"The model does not identify significant risk factors at this time (Confidence: {1-probability:.2%})")
-#                 st.info("Advise: Maintain a healthy diet and regular exercise to keep your risk levels low.")
-#         else:
-#             st.error(f"API Server Error: Received status code {response.status_code}")
-            
-#     except requests.exceptions.ConnectionError:
-#         st.error("Could not connect to the FastAPI backend. Is your API server running on port 8000?")
-
-# # 7. Sidebar Info
-# st.sidebar.info("This interface acts as a clean client frontend, requesting predictive analytics from a dedicated FastAPI microservice backend.")
-
 import streamlit as st
 import requests
 import pandas as pd
@@ -86,7 +12,7 @@ st.set_page_config(page_title="CardioCare Predictor", layout="wide")
 st.sidebar.title("Navigation")
 page = st.sidebar.radio("Go to", ["New Assessment", "History Dashboard"])
 
-# 2. Page: New Assessment (Your existing form code goes here)
+# 2. Page: New Assessment
 if page == "New Assessment":
     st.title("❤️ Cardiovascular Risk Assessment")
     st.write("Enter the patient details below to predict the likelihood of cardiovascular disease.")
@@ -100,16 +26,24 @@ if page == "New Assessment":
         age_years = st.number_input("Age (Years)", min_value=1, max_value=120, value=50)
         height = st.number_input("Height (cm)", min_value=100, max_value=250, value=165)
         weight = st.number_input("Weight (kg)", min_value=30, max_value=250, value=70)
+        is_smoker = st.selectbox("Smoking Status", options=["Non-Smoker", "Active Smoker"])
 
     with col2:
         systolic = st.number_input("Systolic BP (ap_hi)", min_value=80, max_value=250, value=120)
         diastolic = st.number_input("Diastolic BP (ap_lo)", min_value=40, max_value=150, value=80)
         cholesterol = st.selectbox("Cholesterol Level", options=[1, 2, 3], 
                                 format_func=lambda x: {1: "Normal", 2: "Above Normal", 3: "Well Above Normal"}[x])
+        is_active = st.selectbox("Physical Activity Level", options=["Regularly Active (>=150 mins/week)", "Sedentary / Low Activity"])
 
     # 5. Prediction Logic via API
     if st.button("Generate Assessment", type="primary"):
-        
+
+        age_years = int(age_years) if age_years else 50
+        height = float(height) if height else 165.0
+        weight = float(weight) if weight else 70.0
+        systolic = int(systolic) if systolic else 120
+        diastolic = int(diastolic) if diastolic else 80
+
         # Create the payload dictionary matching the exact schema FastAPI expects
         payload = {
             "age_years": float(age_years),
@@ -117,265 +51,53 @@ if page == "New Assessment":
             "weight": float(weight),
             "systolic_bp": float(systolic),
             "diastolic_bp": float(diastolic),
-            "cholesterol": int(cholesterol)
+            "cholesterol": int(cholesterol),
+            "is_smoker": True if is_smoker == "Active Smoker" else False,
+            "is_active": True if is_active == "Regularly Active (>=150 mins/week)" else False
         }
         
         try:
+            with st.spinner("Analyzing biometrics and generating clinical insights..."):
             # Send an HTTP POST request containing our data to the FastAPI endpoint
-            response = requests.post(API_URL, json=payload)
-            
-            # Check if the API responded with success (Status Code 200)
-            if response.status_code == 200:
-                result = response.json()  # Parse the incoming JSON text into a Python dict
+                response = requests.post(API_URL, json=payload)
                 
-                prediction = result["prediction"]
-                probability = result["high_risk_probability"]
-                risk_label = result["risk_label"]
+                if response.status_code == 200:
+                    result = response.json()  # Parse the incoming JSON text into a Python dict
+                    
+                    # Extract Hybrid Results from Backend
+                    ml_prediction = result["ml_prediction"]
+                    ml_probability = result["high_risk_probability"]
+                    clinical_label = result["clinical_risk_label"]
+                    clinical_score = result["clinical_risk_score"]
+                    ai_advice = result.get("recommendations", "") # Capture the AI advice
+                    
+                    st.divider()
+                    
+                    # 6. Display Results from API Response
+                    st.subheader("📊 Diagnostic Assessment Summary")
                 
-                st.divider()
-                
-                # 6. Display Results from API Response
-                if prediction == 1:
-                    st.error(f"### Result: {risk_label} Detected")
-                    st.write(f"The model identifies patterns consistent with cardiovascular disease (Confidence: {probability:.2%})")
-                    st.warning("Advise: Please consult with a healthcare professional for a detailed clinical examination.")
+                    # Display both indicators so the user gets context
+                    c1, c2 = st.columns(2)
+                    with c1:
+                        st.metric(label="Clinical Risk Score (AHA Criteria)", value=f"{clinical_score} pts", delta=clinical_label)
+                    with c2:
+                        st.metric(label="ML Model Prediction Confidence", value=f"{ml_probability:.1%}", delta="High Risk" if ml_prediction == 1 else "Low Risk", delta_color="inverse")
+                    
+                    # Final Combined Status Display
+                    if clinical_label == "High Risk" or ml_prediction == 1:
+                        st.error(f"### Status Flag: Elevated Cardiovascular Risk Detected")
+                    else:
+                        st.success(f"### Status Flag: Low Cardiovascular Risk")
+
+                    if ai_advice:
+                        st.markdown("---")
+                        st.subheader("🤖 Personalized Clinical Guidance (AI Generated)")
+                        st.markdown(ai_advice)
                 else:
-                    st.success(f"### Result: {risk_label} Detected")
-                    st.write(f"The model does not identify significant risk factors at this time (Confidence: {1-probability:.2%})")
-                    st.info("Advise: Maintain a healthy diet and regular exercise to keep your risk levels low.")
-            else:
-                st.error(f"API Server Error: Received status code {response.status_code}")
+                    st.error(f"API Server Error: Received status code {response.status_code}")
                 
-        except requests.exceptions.ConnectionError:
-            st.error("Could not connect to the FastAPI backend. Is your API server running on port 8000?")
-
-
-# 3. Page: History Dashboard
-# elif page == "History Dashboard":
-#     st.title("📊 Patient Assessment History")
-#     st.write("View and analyze historical records retrieved from MongoDB Atlas.")
-    
-#     with st.spinner("Fetching historical data..."):
-#         try:
-#             response = requests.get(f"{BACKEND_URL}/assessments")
-#             if response.status_code == 200:
-#                 result = response.json()
-                
-#                 if result.get("status") == "success" and result.get("data"):
-#                     # Convert JSON data straight into a Pandas DataFrame for easy viewing
-#                     df = pd.DataFrame(result["data"])
-                    
-#                     # Optional cleanup: drop the internal DB id column from showing up in the table
-#                     if "id" in df.columns:
-#                         df = df.drop(columns=["id"])
-                    
-#                     # Reorder columns visually if you like
-#                     st.subheader("📋 All Records")
-#                     st.dataframe(df, use_container_width=True)
-                    
-#                     # Add a simple metric display for fun
-#                     st.subheader("💡 Quick Analytics")
-#                     col1, col2 = st.columns(2)
-#                     with col1:
-#                         st.metric("Total Assessments Run", len(df))
-#                     with col2:
-#                         # Assuming your prediction result column is named 'prediction' or 'risk_score'
-#                         if "prediction" in df.columns:
-#                             high_risk_count = (df["prediction"] == "High Risk").sum() # Edit match based on your output
-#                             st.metric("High Risk Cases Detected", high_risk_count)
-                            
-#                 else:
-#                     st.info("No records found in the database yet. Go run an assessment!")
-#             else:
-#                 st.error("Failed to connect to backend server API.")
-#         except Exception as e:
-#             st.error(f"Error loading dashboard: {e}")
-
-# elif page == "History Dashboard":
-#     st.title("📊 Patient Assessment History")
-#     st.write("View and analyze historical records retrieved from MongoDB Atlas.")
-    
-#     with st.spinner("Fetching historical data..."):
-#         try:
-#             response = requests.get(f"{BACKEND_URL}/assessments")
-#             if response.status_code == 200:
-#                 result = response.json()
-                
-#                 if result.get("status") == "success" and result.get("data"):
-#                     # 1. Load data into DataFrame
-#                     df = pd.DataFrame(result["data"])
-                    
-#                     # 2. Cleanup MongoDB internal columns if they exist
-#                     columns_to_drop = ["id", "_id", "status"]
-#                     df = df.drop(columns=[col for col in columns_to_drop if col in df.columns], errors='ignore')
-                    
-#                     # 3. Rename columns to look professional
-#                     rename_dict = {
-#                         "age": "Age (Years)",
-#                         "gender": "Gender",
-#                         "height": "Height (cm)",
-#                         "weight": "Weight (kg)",
-#                         "ap_hi": "Systolic BP",
-#                         "ap_lo": "Diastolic BP",
-#                         "cholesterol": "Cholesterol",
-#                         "gluc": "Glucose Level",
-#                         "smoke": "Smoker",
-#                         "alco": "Alcohol Consumer",
-#                         "active": "Physical Activity",
-#                         "prediction": "Risk Assessment",
-#                         "probability": "Risk Probability (%)",
-#                         "timestamp": "Date Evaluated"
-#                     }
-#                     df = df.rename(columns=rename_dict)
-                    
-#                     # 4. Map binary/numeric categories to clean text labels if needed
-#                     # (Adjust these mappings based on how your backend stores them)
-#                     if "Risk Probability (%)" in df.columns:
-#                         # Convert to clean percentage formatting if it's a decimal/float
-#                         df["Risk Probability (%)"] = df["Risk Probability (%)"].apply(lambda x: f"{x:.1f}%" if isinstance(x, (int, float)) else x)
-
-#                     # --- METRICS SECTION ---
-#                     st.subheader("💡 Quick Analytics")
-#                     col1, col2, col3 = st.columns(3)
-#                     with col1:
-#                         st.metric("Total Assessments Run", len(df))
-#                     with col2:
-#                         # Count high-risk cases dynamically
-#                         risk_col = "Risk Assessment" if "Risk Assessment" in df.columns else "prediction"
-#                         if risk_col in df.columns:
-#                             # Match against whatever string your model outputs (e.g., "High Risk" or 1)
-#                             high_risk_mask = df[risk_col].astype(str).str.contains("High|1", case=False, na=False)
-#                             high_risk_count = high_risk_mask.sum()
-#                             st.metric("High Risk Cases Detected", high_risk_count, delta=f"{high_risk_count/len(df)*100:.1f}% of total", delta_color="inverse")
-#                     with col3:
-#                         # Average age calculation
-#                         age_col = "Age (Years)" if "Age (Years)" in df.columns else "age"
-#                         if age_col in df.columns:
-#                             avg_age = pd.to_numeric(df[age_col], errors='coerce').mean()
-#                             st.metric("Average Patient Age", f"{avg_age:.1f} yrs" if not pd.isna(avg_age) else "N/A")
-                    
-#                     st.markdown("---")
-                    
-#                     # --- BEAUTIFIED DATA TABLE ---
-#                     st.subheader("📋 Interactive Patient Log")
-#                     st.write("Use the column headers to sort, search, or filter specific case details.")
-                    
-#                     # Display interactive dataframe with customized container width
-#                     st.dataframe(
-#                         df, 
-#                         use_container_width=True,
-#                         hide_index=True # Hides the row numbers (0, 1, 2...) for a cleaner look
-#                     )
-                    
-#                 else:
-#                     st.info("No records found in the database yet. Go run an assessment!")
-#             else:
-#                 st.error("Failed to connect to backend server API.")
-#         except Exception as e:
-#             st.error(f"Error loading dashboard: {e}")
-
-# elif page == "History Dashboard":
-#     # Custom CSS to apply a clean font style across this page
-#     st.markdown(
-#         """
-#         <style>
-#         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
-#         html, body, [class*="css"], p, h1, h2, h3, h4 {
-#             font-family: 'Inter', sans-serif !important;
-#         }
-#         </style>
-#         """, 
-#         unsafe_allow_html=True
-#     )
-
-#     st.title("📊 Patient Assessment History")
-#     st.write("View and analyze historical records retrieved from MongoDB Atlas.")
-    
-#     with st.spinner("Fetching historical data..."):
-#         try:
-#             response = requests.get(f"{BACKEND_URL}/assessments")
-#             if response.status_code == 200:
-#                 result = response.json()
-                
-#                 if result.get("status") == "success" and result.get("data"):
-#                     raw_data = result["data"]
-#                     flattened_records = []
-                    
-#                     # 1. Unpack the nested JSON format from MongoDB rows
-#                     for record in raw_data:
-#                         flat_row = {}
-                        
-#                         # Extract the Date
-#                         flat_row["Date"] = record.get("Date Evaluated") or record.get("timestamp", "N/A")
-#                         # Clean up timestamp strings to show just the date and time cleanly
-#                         if "T" in flat_row["Date"]:
-#                             flat_row["Date"] = flat_row["Date"].split(".")[0].replace("T", " ")
-                        
-#                         # Safely grab dictionary pieces from "input_features"
-#                         inputs = record.get("input_features", {})
-#                         if isinstance(inputs, dict):
-#                             flat_row["Age"] = inputs.get("age_years") or inputs.get("age") or "N/A"
-#                             flat_row["Height"] = inputs.get("height") or "N/A"
-#                             flat_row["Weight"] = inputs.get("weight") or "N/A"
-#                             flat_row["Systolic BP"] = inputs.get("systolic_bp") or inputs.get("ap_hi") or "N/A"
-#                             flat_row["Diastolic BP"] = inputs.get("diastolic_bp") or inputs.get("ap_lo") or "N/A"
-#                             flat_row["Cholesterol Level"] = inputs.get("cholesterol_level") or inputs.get("cholesterol") or "N/A"
-                        
-#                         # Safely grab assessment pieces from "inference_results"
-#                         inference = record.get("inference_results", {})
-#                         if isinstance(inference, dict):
-#                             # Tries to find your risk labels or defaults gracefully
-#                             flat_row["Assessment"] = inference.get("risk_label") or inference.get("prediction") or "N/A"
-#                             # If it's a numeric 1 or 0, convert to readable words
-#                             if flat_row["Assessment"] == 1 or str(flat_row["Assessment"]) == "1":
-#                                 flat_row["Assessment"] = "⚠️ Hjjigh Risk"
-#                             elif flat_row["Assessment"] == 0 or str(flat_row["Assessment"]) == "0":
-#                                 flat_row["Assessment"] = "✅ Low Risk"
-                        
-#                         flattened_records.append(flat_row)
-                    
-#                     # 2. Convert our clean, un-nested records into a DataFrame
-#                     df = pd.DataFrame(flattened_records)
-                    
-#                     # Enforce the column sorting order you asked for
-#                     desired_order = ["Date", "Age", "Height", "Weight", "Systolic BP", "Diastolic BP", "Cholesterol Level", "Assessment"]
-#                     df = df[[col for col in desired_order if col in df.columns]]
-                    
-#                     # --- METRICS SECTION ---
-#                     st.subheader("💡 Quick Analytics")
-#                     col1, col2 = st.columns(2)
-#                     with col1:
-#                         st.metric("Total Assessments Run", len(df))
-#                     with col2:
-#                         if "Assessment" in df.columns:
-#                             high_risk_count = df["Assessment"].astype(str).str.contains("High|1", case=False, na=False).sum()
-#                             st.metric("High Risk Cases Detected", high_risk_count)
-                    
-#                     st.markdown("---")
-                    
-#                     # --- BEAUTIFIED DATA TABLE ---
-#                     st.subheader("📋 Interactive Patient Log")
-                    
-#                     # 3. Render dataframe with background colors applied to the "Assessment" column
-#                     st.dataframe(
-#                         df,
-#                         use_container_width=True,
-#                         hide_index=True,
-#                         column_config={
-#                             "Assessment": st.column_config.TextColumn(
-#                                 "Assessment",
-#                                 help="Calculated risk status from machine learning model",
-#                                 # This subtly highlights text formatting natively or adds color structures
-#                             )
-#                         }
-#                     )
-                    
-#                 else:
-#                     st.info("No records found in the database yet. Go run an assessment!")
-#             else:
-#                 st.error("Failed to connect to backend server API.")
-#         except Exception as e:
-#             st.error(f"Error loading dashboard: {e}")
+        except Exception as e:
+            st.error(f"Connection Error: {e}")
 
 elif page == "History Dashboard":
     # 1. Global Font Styling via CSS (for headers, metrics, and text)
@@ -400,7 +122,7 @@ elif page == "History Dashboard":
     
     with st.spinner("Fetching historical data..."):
         try:
-            response = requests.get(f"{BACKEND_URL}/assessments")
+            response = requests.get(f"{BACKEND_URL}/history")
             if response.status_code == 200:
                 result = response.json()
                 
@@ -425,6 +147,8 @@ elif page == "History Dashboard":
                             flat_row["Weight"] = inputs.get("weight") or "N/A"
                             flat_row["Systolic BP"] = inputs.get("systolic_bp") or inputs.get("ap_hi") or "N/A"
                             flat_row["Diastolic BP"] = inputs.get("diastolic_bp") or inputs.get("ap_lo") or "N/A"
+                            flat_row["Smoking Status"] = "Active Smoker" if inputs.get("is_smoker") is True else "Non-Smoker"
+                            flat_row["Activity Level"] = "Active" if inputs.get("is_active") is True else "Sedentary"
                             
                             # Clean up the raw numerical code for Cholesterol
                             raw_chol = str(inputs.get("cholesterol", inputs.get("cholesterol_level", "1")))
@@ -441,18 +165,24 @@ elif page == "History Dashboard":
                         inference = record.get("inference_results", {})
                         if isinstance(inference, dict):
                             res = inference.get("risk_label") or inference.get("prediction") or "N/A"
-                            # Map values cleanly to visual badges
                             if str(res) in ["1", "High Risk"]:
                                 flat_row["Assessment"] = "High Risk"
                             else:
                                 flat_row["Assessment"] = "Low Risk"
+                                
+                            # Include Clinical Score points in the row entries
+                            flat_row["Clinical Score"] = f"{inference.get('clinical_score', 0)} pts"
                         
                         flattened_records.append(flat_row)
                     
                     df = pd.DataFrame(flattened_records)
                     
-                    # Ensure exact column order requested
-                    desired_order = ["Date", "Age", "Height", "Weight", "Systolic BP", "Diastolic BP", "Cholesterol Level", "Assessment"]
+                    # Updated desired order listing to showcase the structural improvements
+                    desired_order = [
+                        "Date", "Age", "Height", "Weight", 
+                        "Systolic BP", "Diastolic BP", "Cholesterol Level", 
+                        "Smoking Status", "Activity Level", "Clinical Score", "Assessment"
+                    ]
                     df = df[[col for col in desired_order if col in df.columns]]
                     
                     # --- METRICS SECTION ---
@@ -470,7 +200,6 @@ elif page == "History Dashboard":
                     st.subheader("📋 Interactive Patient Log")
                     st.write("Use the headers to sort or filter specific case entries.")
                     
-                    # Style and highlight the assessment column natively
                     st.dataframe(
                         df,
                         use_container_width=True,
@@ -487,6 +216,7 @@ elif page == "History Dashboard":
                     
                 else:
                     st.info("No records found in the database yet.")
+
             else:
                 st.error("Failed to connect to backend server API.")
         except Exception as e:
